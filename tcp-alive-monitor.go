@@ -9,12 +9,18 @@ import (
 	"time"
 )
 
-func RetryDial(retrySecond, retryTime int, addr string) (net.Conn, error) {
+func DialTCP(addr string) (*net.TCPConn, error) {
+	tcpAddr, _ := net.ResolveTCPAddr("tcp", addr)
+	conn, err := net.DialTCP("tcp", nil, tcpAddr)
+	return conn, err
+}
+
+func RetryDial(addr string) (*net.TCPConn, error) {
 	var err error
-	var conn net.Conn
+	var conn *net.TCPConn
 	for i := 0; i < retryTime; i++ {
 		time.Sleep(time.Second * time.Duration(retrySecond))
-		conn, err = net.Dial("tcp", addr)
+		conn, err = DialTCP(addr)
 		if err != nil {
 			log.Printf("retry...")
 			continue
@@ -24,7 +30,7 @@ func RetryDial(retrySecond, retryTime int, addr string) (net.Conn, error) {
 	return nil, err
 }
 
-func Monitoring(conn net.Conn) {
+func Monitoring(conn *net.TCPConn) {
 	r := bufio.NewReader(conn)
 	for {
 		line, _, err := r.ReadLine()
@@ -36,13 +42,14 @@ func Monitoring(conn net.Conn) {
 	}
 }
 
-func Retry(addr string, retrySecond, retryTime int) {
+func Retry(addr string) {
 	for {
-		conn, err := RetryDial(retrySecond, retryTime, addr)
+		conn, err := RetryDial(addr)
 		if err != nil {
 			log.Printf("Fatal: %v", err)
 			break
 		}
+		SetKeepAlive(conn, time.Second*time.Duration(keepAlive))
 
 		log.Printf("connected")
 
@@ -51,38 +58,48 @@ func Retry(addr string, retrySecond, retryTime int) {
 	}
 }
 
+func SetKeepAlive(conn *net.TCPConn, t time.Duration) {
+	conn.SetKeepAlive(true)
+	conn.SetKeepAlivePeriod(t)
+}
+
+var (
+	idleSecond  int
+	retrySecond int
+	retryTime   int
+	keepAlive   int
+)
+
 func main() {
-	var (
-		idleSecond  int
-		retrySecond int
-		retryTime   int
-	)
 	flag.IntVar(&idleSecond, "i", 5, "idle second")
 	flag.IntVar(&idleSecond, "idle", 5, "idle second")
 	flag.IntVar(&retrySecond, "r", 1, "retry second")
 	flag.IntVar(&retrySecond, "retry", 1, "retry second")
 	flag.IntVar(&retryTime, "t", 10, "retry time")
 	flag.IntVar(&retryTime, "time", 10, "retry time")
+	flag.IntVar(&keepAlive, "k", 5, "KeepAlive interval Second")
+	flag.IntVar(&keepAlive, "keep", 5, "KeepAlive interval Second")
 	flag.Parse()
 
 	var addr string = flag.Arg(0)
 	for {
-		conn, err := net.Dial("tcp", addr)
+		conn, err := DialTCP(addr)
 		if err != nil {
 			log.Printf("Fatal: %v", err)
 			time.Sleep(time.Second * time.Duration(idleSecond))
 			continue
 		}
+		SetKeepAlive(conn, time.Second*time.Duration(keepAlive))
 
 		log.Printf("connected")
 
-		fmt.Printf("open\r\n")
+		fmt.Printf("open\n")
 
 		Monitoring(conn)
 		conn.Close()
-		Retry(addr, retrySecond, retryTime)
+		Retry(addr)
 
-		fmt.Printf("close\r\n")
+		fmt.Printf("close\n")
 		time.Sleep(time.Second * time.Duration(idleSecond))
 	}
 }
